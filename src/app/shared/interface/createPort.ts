@@ -4,7 +4,7 @@ export interface createPortBody {
   city: string;
   asn: number;
   type_id: number;
-  proxy_type_id: number | null;
+  proxy_type_id: number | null | undefined;
   name: string | null;
   server_port_type_id: number;
 }

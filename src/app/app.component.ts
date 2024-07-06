@@ -1,12 +1,11 @@
 import { Component, DestroyRef, inject, OnInit } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
-import { MainService } from './shared/services/mainService.service';
 import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { MatSelectModule } from '@angular/material/select';
 import { MatInputModule } from '@angular/material/input';
 import {
   FormControl,
+  FormGroup,
   FormsModule,
   ReactiveFormsModule,
   Validators,
@@ -16,8 +15,9 @@ import { Country } from './shared/interface/country';
 import {
   BehaviorSubject,
   Observable,
-  ReplaySubject,
+  filter,
   finalize,
+  forkJoin,
   map,
   startWith,
   tap,
@@ -27,12 +27,17 @@ import { MatDividerModule } from '@angular/material/divider';
 import { MatButtonModule } from '@angular/material/button';
 import { City } from './shared/interface/city';
 import { State } from './shared/interface/state';
-import { GeneratedDestination } from './shared/interface/generatedDestination';
+import {
+  ExcelInfoRow,
+  GeneratedDestination,
+} from './shared/interface/generatedDestination';
 import { HttpClientService } from './shared/services/httpClient.service';
 import { createPortBody } from './shared/interface/createPort';
-import { PROXY_TYPE_IDS } from './shared/constants/proxyTypeIds';
+import { PROXY_TYPE, PROXY_TYPE_IDS } from './shared/constants/proxyTypeIds';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
+import { XlsxjsService } from './shared/services/xlsxJs.service';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { generateRandomAddress } from './shared/utils/utils.functions';
 
 @Component({
   selector: 'app-root',
@@ -54,91 +59,128 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
   styleUrl: './app.component.less',
 })
 export class AppComponent implements OnInit {
-  title = 'DovidDovid';
-  mainService = inject(MainService);
   httpClientService = inject(HttpClientService);
+  xlsxjsService = inject(XlsxjsService);
+  destroyRef = inject(DestroyRef);
 
-  public countryControl = new FormControl<Country | null>(
-    null,
-    Validators.required
-  );
-  public proxyTypeIdControl = new FormControl<number | null>(
-    1,
-    Validators.required
-  );
   public countries$ = new BehaviorSubject<Country[]>([]);
   public states$ = new BehaviorSubject<State[]>([]);
   public cities$ = new BehaviorSubject<City[]>([]);
   public filteredCountries$ = new BehaviorSubject<Country[]>([]);
   public isLoading$ = new BehaviorSubject<boolean>(false);
   public proxyTypeIds = PROXY_TYPE_IDS;
+  public form = new FormGroup({
+    countryControl: new FormControl<Country | null>(null, Validators.required),
+    proxyTypeIdControl: new FormControl<PROXY_TYPE[] | null>(
+      [PROXY_TYPE.RESIDENTIAL],
+      Validators.required
+    ),
+    residentalCountControl: new FormControl<number | null>(
+      0,
+      Validators.required
+    ),
+    mobileCountControl: new FormControl<number | null>(0, Validators.required),
+  });
 
-  constructor() {}
-
-  public ngOnInit(): void {
-    this.mainService.getAllCountries().subscribe((countries) => {
-      this.countries$.next(countries);
-      this.filteredCountries$.next(countries);
-    });
-    this.mainService.getAllStates().subscribe((states) => {
-      this.states$.next(states);
-    });
-    this.mainService.getAllCities().subscribe((cities) => {
-      this.cities$.next(cities);
-    });
-    this.countryControl.valueChanges
-      .pipe(
-        startWith(''),
-        map((value) => {
-          const name = typeof value === 'string' ? value : value?.name;
-          this.filteredCountries$.next(
-            name ? this.filter(name as string) : this.countries$.value.slice()
-          );
-        })
-      )
-      .subscribe();
+  public get displayResidentalCountControl(): boolean {
+    return !!this.form.controls.proxyTypeIdControl.value?.find(
+      (value) => value === PROXY_TYPE.RESIDENTIAL
+    );
   }
 
-  public onGenerateRandomAddress(): void {
-    this.isLoading$.next(true);
-    const selectedCountry = this.countryControl.value;
-    const result = this.generateRandomAddress(selectedCountry);
+  public get displayMobileCountControl(): boolean {
+    return !!this.form.controls.proxyTypeIdControl.value?.find(
+      (value) => value === PROXY_TYPE.MOBILE
+    );
+  }
 
+  public ngOnInit(): void {
+    this.initSubjects();
+    this.subscribeToControls();
+  }
+
+  public createRandomPorts(): void {
+    this.isLoading$.next(true);
+
+    const selectedCountry = this.form.controls.countryControl.value;
+    const residentalCount =
+      this.form.controls.residentalCountControl.value || 0;
+    const mobileCount = this.form.controls.mobileCountControl.value || 0;
+
+    let mergeResidentalObservables = new Array<Observable<any>>();
+    let mergeMobileObservables = new Array<Observable<any>>();
+
+    for (let index = 0; index < residentalCount; index++) {
+      const randomAddress = generateRandomAddress(
+        selectedCountry,
+        this.states$.value,
+        this.cities$.value
+      );
+      mergeResidentalObservables.push(
+        this.createPort(randomAddress, PROXY_TYPE.RESIDENTIAL)
+      );
+    }
+
+    for (let index = 0; index < mobileCount; index++) {
+      const randomAddress = generateRandomAddress(
+        selectedCountry,
+        this.states$.value,
+        this.cities$.value
+      );
+      mergeMobileObservables.push(
+        this.createPort(randomAddress, PROXY_TYPE.MOBILE)
+      );
+    }
+
+    forkJoin([
+      ...mergeResidentalObservables,
+      ...mergeMobileObservables,
+    ]).subscribe((values) => {
+      const someString: ExcelInfoRow[] = [];
+      values.forEach((value, i) =>
+        someString.push(
+          this.combineExcelInfoCell(
+            value.data,
+            i > mergeResidentalObservables.length - 1
+              ? PROXY_TYPE.MOBILE
+              : PROXY_TYPE.RESIDENTIAL
+          )
+        )
+      );
+      this.xlsxjsService.generateExcelFile(someString);
+    });
+  }
+
+  private combineExcelInfoCell(
+    response: any,
+    proxyType: PROXY_TYPE
+  ): ExcelInfoRow {
+    return {
+      value: `${response?.login}:${response?.password}@${response?.server}:${response?.port}`,
+      proxyType,
+    };
+  }
+
+  private createPort(
+    destination: GeneratedDestination,
+    proxyTypeId: PROXY_TYPE
+  ): Observable<any> {
     const body: createPortBody = {
-      country_code: result.selectedCountry?.code,
-      state: result.randomOfState.name,
-      city: result.randomOfCity.name,
+      country_code: destination.selectedCountry?.code,
+      state: destination.randomOfState.name,
+      city: destination.randomOfCity.name,
       asn: 0,
       type_id: 2,
-      proxy_type_id: this.proxyTypeIdControl.value,
-      name: null,
+      proxy_type_id: proxyTypeId,
+      name: `${proxyTypeId === 1 ? 'Res' : 'Mob'}${
+        destination.selectedCountry?.name
+      } - ${destination.randomOfCity.name}`,
       server_port_type_id: 0,
     };
 
-    this.httpClientService
+    return this.httpClientService
       .createPort(body)
-      .pipe(finalize(() => this.isLoading$.next(false)))
-      .subscribe(console.log);
-  }
-
-  public generateRandomAddress(
-    selectedCountry: Country | null
-  ): GeneratedDestination {
-    const pullOfStates = this.states$.value.filter(
-      (state) => state.dir_country_id === selectedCountry?.id
-    );
-    const randomIndexOfState = Math.floor(Math.random() * pullOfStates.length);
-    const randomOfState = pullOfStates[randomIndexOfState];
-    const pullOfCities = this.cities$.value.filter(
-      (city) => city.dir_state_id === randomOfState.id
-    );
-    const randomIndexOfCity = Math.floor(Math.random() * pullOfCities.length);
-    const randomOfCity = pullOfCities[randomIndexOfCity];
-    return {
-      selectedCountry,
-      randomOfState,
-      randomOfCity,
-    };
+      .pipe(finalize(() => this.isLoading$.next(false)));
   }
 
   public displayFn(country: Country): string {
@@ -151,5 +193,50 @@ export class AppComponent implements OnInit {
     return this.countries$.value.filter((country) =>
       country.name.toLowerCase().includes(filterValue)
     );
+  }
+
+  private initSubjects(): void {
+    this.httpClientService.getAllCountries().subscribe((countries) => {
+      this.countries$.next(countries);
+      this.filteredCountries$.next(countries);
+    });
+    this.httpClientService.getAllStates().subscribe((states) => {
+      this.states$.next(states);
+    });
+    this.httpClientService.getAllCities().subscribe((cities) => {
+      this.cities$.next(cities);
+    });
+  }
+
+  private subscribeToControls(): void {
+    this.form.controls.countryControl.valueChanges
+      .pipe(
+        startWith(''),
+        map((value) => {
+          const name = typeof value === 'string' ? value : value?.name;
+          this.filteredCountries$.next(
+            name ? this.filter(name as string) : this.countries$.value.slice()
+          );
+        })
+      )
+      .subscribe();
+
+    this.form.controls.proxyTypeIdControl.valueChanges
+      .pipe(
+        filter((value) => !!value),
+        tap((value) =>
+          value?.find((value) => value === PROXY_TYPE.MOBILE)
+            ? this.form.controls.residentalCountControl.setValue(0)
+            : this.form.controls.mobileCountControl.setValue(0)
+        )
+      )
+      .subscribe();
+
+    this.xlsxjsService.excelFileGenerateFinish
+      .pipe(
+        takeUntilDestroyed(this.destroyRef),
+        tap(() => this.form.reset())
+      )
+      .subscribe();
   }
 }

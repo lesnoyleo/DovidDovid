@@ -1,9 +1,9 @@
-<div class="example-form">
-  @if (isLoading$ | async) {
-  <div class="example-form__spinner">
-    <mat-spinner></mat-spinner>
-  </div>
-  } @else {
+@if (isLoading$ | async) {
+<div class="example-form__spinner">
+  <mat-spinner></mat-spinner>
+</div>
+} @else {
+<form class="example-form" [formGroup]="form">
   <mat-form-field class="example-full-width">
     <mat-label>Countries</mat-label>
     <input
@@ -11,7 +11,7 @@
       placeholder="Pick one"
       aria-label="Countries"
       matInput
-      [formControl]="countryControl"
+      formControlName="countryControl"
       [matAutocomplete]="auto"
     />
     <mat-autocomplete
@@ -26,19 +26,45 @@
   </mat-form-field>
   <mat-form-field>
     <mat-label>Proxy Type ID</mat-label>
-    <mat-select [formControl]="proxyTypeIdControl">
+    <mat-select formControlName="proxyTypeIdControl" multiple>
       @for (proxyTypeId of proxyTypeIds; track proxyTypeId) {
       <mat-option [value]="proxyTypeId.key">{{ proxyTypeId.value }}</mat-option>
       }
     </mat-select>
   </mat-form-field>
-  }
-</div>
+  <div class="example-form__count-layer">
+    @if(displayResidentalCountControl){
+    <mat-form-field>
+      <mat-label>RESIDENTAL Count</mat-label>
+      <input
+        matInput
+        formControlName="residentalCountControl"
+        placeholder="RESIDENTAL Count"
+        value="0"
+        type="number"
+      />
+    </mat-form-field>
+    } @if(displayMobileCountControl){
+    <mat-form-field>
+      <mat-label>MOBILE Count</mat-label>
+      <input
+        matInput
+        formControlName="mobileCountControl"
+        placeholder="RESIDENTAL Count"
+        value="0"
+        type="number"
+      />
+    </mat-form-field>
+    }
+  </div>
+</form>
+
+}
 
 <button
   mat-raised-button
-  [disabled]="!countryControl.valid || !proxyTypeIdControl.valid"
-  (click)="onGenerateRandomAddress()"
+  [disabled]="!form.valid"
+  (click)="createRandomPorts()"
   class="generate-button"
 >
   Сгенерировать
