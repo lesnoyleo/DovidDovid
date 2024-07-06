@@ -2,11 +2,8 @@ import { Injectable } from '@angular/core';
 import { utils, WorkSheet, writeFile } from 'xlsx-js-style';
 import { ExcelInfoRow } from '../interface/generatedDestination';
 import { PROXY_TYPE } from '../constants/proxyTypeIds';
-import {
-  USER_AGENT_MOBILE_DATA,
-  USER_AGENT_RESIDENTAL_DATA,
-} from '../constants/userAgentColum.constant';
 import { Subject } from 'rxjs';
+import { randUA } from '@ahmedrangel/rand-user-agent';
 
 @Injectable({
   providedIn: 'root',
@@ -107,8 +104,8 @@ export class XlsxjsService {
       combinedExcelRow.push('');
       combinedExcelRow.push(
         excelInfoRows[index].proxyType === PROXY_TYPE.MOBILE
-          ? USER_AGENT_MOBILE_DATA
-          : USER_AGENT_RESIDENTAL_DATA
+          ? randUA('mobile')
+          : randUA('desktop')
       );
       combinedExcelRow.push('');
       data.push(combinedExcelRow);
